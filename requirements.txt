@@ -1,0 +1,8 @@
+openpyxl
+pandas
+langdetect
+## Required Python packages for the translation script
+pandas
+openpyxl
+deep-translator
+tqdm
