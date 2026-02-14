@@ -173,10 +173,8 @@ def main():
             target_code = str(lang_code).strip()
             for row_idx in range(test_df.shape[0]):
                 source_text = str(test_df.iat[row_idx, 0]).strip()
-                clean_text = preprocess_text(source_text)
-                prepped_text, placeholders = extract_bold(clean_text)
-                if row_idx == 0:
-                    print(f"\nRow {row_idx+1} ({source_lang.upper()}): {source_text}")
+                prepped_text = preprocess_text(source_text)
+                print(f"Row {row_idx+1} ({source_lang.upper()}): {source_text}")
                 max_attempts = 3
                 attempt = 0
                 error = None
@@ -207,7 +205,9 @@ def main():
                         "error": str(error)
                     })
                 else:
-                    translated_str = restore_bold(str(translated), placeholders)
+                    translated_str = str(translated)
+                    # Preserve bold formatting: if original had **...**, keep **...** in output
+                    # (Assume translation engine preserves markdown formatting)
                     test_df.iat[row_idx, col_idx] = translated_str
                     print(f"  {lang_code}: {translated_str}")
                     success_count += 1

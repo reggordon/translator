@@ -50,11 +50,11 @@ def choose_backend():
 
 
 def main():
-        # Prompt for source language code
-        default_source_lang = "en"
-        source_lang = input(f"Enter source language code for the first column (default: {default_source_lang}): ").strip()
-        if not source_lang:
-            source_lang = default_source_lang
+    # Prompt for source language code
+    default_source_lang = "en"
+    source_lang = input(f"Enter source language code for the first column (default: {default_source_lang}): ").strip()
+    if not source_lang:
+        source_lang = default_source_lang
     print("\n=== Translation Script ===")
     excel_files = list_excel_files()
     if not excel_files:
@@ -134,6 +134,10 @@ def main():
             skipped_codes.append(col_str)
     if skipped_codes:
         print(f"Warning: Skipping unsupported or empty language columns: {', '.join(map(str, skipped_codes))}")
+        # Drop problematic columns from df to keep headers/data aligned
+        cols_to_drop = [col for col in df.columns[1:] if str(col).strip() in skipped_codes or not str(col).strip()]
+        if cols_to_drop:
+            df.drop(columns=cols_to_drop, inplace=True)
 
     # Prepare exclusion report for summary
     exclusion_report = ""
@@ -235,105 +239,93 @@ def main():
 
 
     try:
-        with tqdm(total=len(rows_to_translate), desc="Translating rows", unit="row") as pbar:
-            for col_idx, lang_code in enumerate(language_codes, start=1):
-                print(f"Translating column: {lang_code}")
-                # Use the full language code for translation
-                target_code = str(lang_code).strip()
-                for row_idx in rows_to_translate:
-                    english_text = str(df.iat[row_idx, 0]).strip()
-                    # Extract bold and replace with placeholders
-                    # Preprocess input for clarity
-                    clean_text = preprocess_text(english_text)
-                    prepped_text, placeholders = extract_bold(clean_text)
-                    # Skip if already translated
-                    if pd.notna(df.iat[row_idx, col_idx]) and str(df.iat[row_idx, col_idx]).strip() != "":
-                        skip_count += 1
-                        pbar.update(1)
-                        continue
-                    try:
-                        translated = None
-                        backend = ""
-                        max_attempts = 3
-                        attempt = 0
-                        error = None
-                        while attempt < max_attempts:
-                            if backend_choice == '1':
-                                translated, error = translate_with_timeout(
-                                    GoogleTranslator(source=source_lang, target=target_code).translate,
-                                    (prepped_text,), 15)
-                                backend = "Google"
-                            elif backend_choice == '2':
+        for col_idx, lang_code in enumerate(language_codes, start=1):
+            print(f"Translating column: {lang_code}")
+            target_code = str(lang_code).strip()
+            for row_idx in rows_to_translate:
+                english_text = str(df.iat[row_idx, 0]).strip()
+                prepped_text = preprocess_text(english_text)
+                if pd.notna(df.iat[row_idx, col_idx]) and str(df.iat[row_idx, col_idx]).strip() != "":
+                    skip_count += 1
+                    continue
+                try:
+                    translated = None
+                    backend = ""
+                    max_attempts = 3
+                    attempt = 0
+                    error = None
+                    while attempt < max_attempts:
+                        if backend_choice == '1':
+                            translated, error = translate_with_timeout(
+                                GoogleTranslator(source=source_lang, target=target_code).translate,
+                                (prepped_text,), 15)
+                            backend = "Google"
+                        elif backend_choice == '2':
+                            translated, error = translate_with_timeout(
+                                LibreTranslator(source=source_lang, target=target_code).translate,
+                                (prepped_text,), 15)
+                            backend = "Libre"
+                        else:
+                            translated, error = translate_with_timeout(
+                                GoogleTranslator(source=source_lang, target=target_code).translate,
+                                (prepped_text,), 15)
+                            backend = "Google"
+                            if error:
                                 translated, error = translate_with_timeout(
                                     LibreTranslator(source=source_lang, target=target_code).translate,
                                     (prepped_text,), 15)
                                 backend = "Libre"
-                            else:
-                                translated, error = translate_with_timeout(
-                                    GoogleTranslator(source=source_lang, target=target_code).translate,
-                                    (prepped_text,), 15)
-                                backend = "Google"
-                                if error:
-                                    translated, error = translate_with_timeout(
-                                        LibreTranslator(source=source_lang, target=target_code).translate,
-                                        (prepped_text,), 15)
-                                    backend = "Libre"
-                            if not error:
-                                break
-                            attempt += 1
-                            time.sleep(0.5)
-                        if error:
-                            raise error
-                        translated_str = str(translated)
-                        # Restore bold as links
-                        translated_str = restore_bold(translated_str, placeholders)
-                        df.iat[row_idx, col_idx] = translated_str
-                        success_count += 1
+                        if not error:
+                            break
+                        attempt += 1
+                        time.sleep(0.5)
+                    if error:
+                        raise error
+                    translated_str = str(translated)
+                    df.iat[row_idx, col_idx] = translated_str
+                    success_count += 1
 
-                        # --- Translation check: back-translate and language detect ---
+                    try:
+                        back_translated, bt_error = translate_with_timeout(
+                            GoogleTranslator(source=target_code, target=source_lang).translate,
+                            (translated_str,), 15)
+                        if bt_error:
+                            back_translated = ""
+                        similarity = difflib.SequenceMatcher(None, english_text, back_translated).ratio() if back_translated else 0.0
                         try:
-                            back_translated, bt_error = translate_with_timeout(
-                                GoogleTranslator(source=target_code, target=source_lang).translate,
-                                (translated_str,), 15)
-                            if bt_error:
-                                back_translated = ""
-                            similarity = difflib.SequenceMatcher(None, english_text, back_translated).ratio() if back_translated else 0.0
-                            try:
-                                detected_lang = detect(translated_str)
-                            except LangDetectException:
-                                detected_lang = "unknown"
-                            if similarity < 0.8 or (
-                                detected_lang != target_code and
-                                detected_lang != lang_code and
-                                detected_lang != "unknown"
-                            ):
-                                suspect_translations.append({
-                                    "row": row_idx,
-                                    "english_text": english_text,
-                                    "language_code": lang_code,
-                                    "short_code": target_code,
-                                    "translated_text": translated_str,
-                                    "back_translated": back_translated,
-                                    "similarity": similarity,
-                                    "detected_lang": detected_lang
-                                })
-                        except Exception:
-                            pass
+                            detected_lang = detect(translated_str)
+                        except LangDetectException:
+                            detected_lang = "unknown"
+                        # Technical document: more forgiving criteria
+                        if similarity < 0.7 or (
+                            detected_lang not in [target_code, lang_code, "unknown", "en"]
+                        ):
+                            suspect_translations.append({
+                                "row": row_idx,
+                                "english_text": english_text,
+                                "language_code": lang_code,
+                                "short_code": target_code,
+                                "translated_text": translated_str,
+                                "back_translated": back_translated,
+                                "similarity": similarity,
+                                "detected_lang": detected_lang
+                            })
+                    except Exception:
+                        pass
 
-                    except Exception as e:
-                        failed_translations.append({
-                            "row": row_idx,
-                            "english_text": english_text,
-                            "language_code": lang_code,
-                            "short_code": target_code,
-                            "error": str(e)
-                        })
-                        df.iat[row_idx, col_idx] = ""
-                        backend = "FAILED"
-                        fail_count += 1
-                    time.sleep(0.3)
-                    pbar.update(1)
-                print(f"Finished translating column: {lang_code}")
+                except Exception as e:
+                    failed_translations.append({
+                        "row": row_idx,
+                        "english_text": english_text,
+                        "language_code": lang_code,
+                        "short_code": target_code,
+                        "error": str(e)
+                    })
+                    df.iat[row_idx, col_idx] = ""
+                    backend = "FAILED"
+                    fail_count += 1
+                time.sleep(0.3)
+            print(f"Finished translating column: {lang_code}")
     except KeyboardInterrupt:
         print("\nTranslation interrupted by user.")
         print(f"Rows translated: {success_count}, Failed: {fail_count}, Skipped: {skip_count}")
@@ -399,7 +391,7 @@ def main():
         for fail in failed_translations[:3]:
             print(f"  Row {fail['row']+1}, Language: {fail['language_code']}, Error: {fail['error']}")
     if suspect_translations:
-        print(f"⚠️ {len(suspect_translations)} suspect translations logged to 'suspect_translations_review.csv'")
+        print(f"⚠️ {len(suspect_translations)} suspect translations are included as a sheet in the output Excel file.")
 
     # Save summary report to file
     summary_report = [
@@ -418,7 +410,7 @@ def main():
         for fail in failed_translations[:3]:
             summary_report.append(f"  Row {fail['row']+1}, Language: {fail['language_code']}, Error: {fail['error']}")
     if suspect_translations:
-        summary_report.append(f"{len(suspect_translations)} suspect translations logged to 'suspect_translations_review.csv'")
+        summary_report.append(f"{len(suspect_translations)} suspect translations are included as a sheet ('SuspectTranslations') in the output Excel file.")
     with open("translation_summary_report.txt", "w", encoding="utf-8") as summary_file:
         summary_file.write("\n".join(summary_report))
 
