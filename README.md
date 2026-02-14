@@ -100,3 +100,6 @@ If you prefer manual setup, follow these steps:
 
 ## License
 MIT
+
+## Privacy & Security
+See [PRIVACY.md](PRIVACY.md) for important privacy and security guidelines when using this tool in a company setting.
