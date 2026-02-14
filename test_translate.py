@@ -24,6 +24,14 @@ def choose_file(files, prompt):
         print("Invalid choice. Try again.")
 
 def main():
+    from langdetect import detect, LangDetectException
+    import difflib
+    suspect_translations = []
+    # Prompt for source language code
+    default_source_lang = "en"
+    source_lang = input(f"Enter source language code for the first column (default: {default_source_lang}): ").strip()
+    if not source_lang:
+        source_lang = default_source_lang
     print("\n=== Test Translation Script ===")
     excel_files = list_excel_files()
     if not excel_files:
@@ -164,11 +172,11 @@ def main():
             print(f"Translating column: {lang_code}")
             target_code = str(lang_code).strip()
             for row_idx in range(test_df.shape[0]):
-                english_text = str(test_df.iat[row_idx, 0]).strip()
-                clean_text = preprocess_text(english_text)
+                source_text = str(test_df.iat[row_idx, 0]).strip()
+                clean_text = preprocess_text(source_text)
                 prepped_text, placeholders = extract_bold(clean_text)
                 if row_idx == 0:
-                    print(f"\nRow {row_idx+1} (EN): {english_text}")
+                    print(f"\nRow {row_idx+1} ({source_lang.upper()}): {source_text}")
                 max_attempts = 3
                 attempt = 0
                 error = None
@@ -176,13 +184,13 @@ def main():
                 while attempt < max_attempts:
                     try:
                         if backend_choice == '1':
-                            translated = GoogleTranslator(source="en", target=target_code).translate(prepped_text)
+                            translated = GoogleTranslator(source=source_lang, target=target_code).translate(prepped_text)
                             error = None
                         elif backend_choice == '2':
-                            translated = LibreTranslator(source="en", target=target_code).translate(prepped_text)
+                            translated = LibreTranslator(source=source_lang, target=target_code).translate(prepped_text)
                             error = None
                         else:
-                            translated = GoogleTranslator(source="en", target=target_code).translate(prepped_text)
+                            translated = GoogleTranslator(source=source_lang, target=target_code).translate(prepped_text)
                             error = None
                         break
                     except Exception as e:
@@ -194,7 +202,7 @@ def main():
                     fail_count += 1
                     failed_translations.append({
                         "row": row_idx,
-                        "english_text": english_text,
+                        "english_text": source_text,
                         "language_code": lang_code,
                         "error": str(error)
                     })
@@ -203,6 +211,31 @@ def main():
                     test_df.iat[row_idx, col_idx] = translated_str
                     print(f"  {lang_code}: {translated_str}")
                     success_count += 1
+
+                    # --- Translation verification: back-translate and language detect ---
+                    try:
+                        back_translated = GoogleTranslator(source=target_code, target=source_lang).translate(translated_str)
+                        similarity = difflib.SequenceMatcher(None, source_text, back_translated).ratio() if back_translated else 0.0
+                        try:
+                            detected_lang = detect(translated_str)
+                        except LangDetectException:
+                            detected_lang = "unknown"
+                        if similarity < 0.8 or (
+                            detected_lang != target_code and
+                            detected_lang != lang_code and
+                            detected_lang != "unknown"
+                        ):
+                            suspect_translations.append({
+                                "row": row_idx,
+                                "source_text": source_text,
+                                "language_code": lang_code,
+                                "translated_text": translated_str,
+                                "back_translated": back_translated,
+                                "similarity": similarity,
+                                "detected_lang": detected_lang
+                            })
+                    except Exception:
+                        pass
             print(f"Finished translating column: {lang_code}")
     except KeyboardInterrupt:
         print("\nTest interrupted by user.")
@@ -229,6 +262,11 @@ def main():
         summary_report.append(f"First 3 failed translations:")
         for fail in failed_translations[:3]:
             summary_report.append(f"  Row {fail['row']+1}, Language: {fail['language_code']}, Error: {fail['error']}")
+    if suspect_translations:
+        summary_report.append("")
+        summary_report.append(f"Suspect translations flagged: {len(suspect_translations)}")
+        for s in suspect_translations[:3]:
+            summary_report.append(f"  Row {s['row']+1}, Language: {s['language_code']}, Similarity: {s['similarity']:.2f}, Detected: {s['detected_lang']}")
     with open("test_translation_summary_report.txt", "w", encoding="utf-8") as summary_file:
         summary_file.write("\n".join(summary_report))
     print("Summary report saved to test_translation_summary_report.txt.")

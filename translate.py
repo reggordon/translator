@@ -50,6 +50,11 @@ def choose_backend():
 
 
 def main():
+        # Prompt for source language code
+        default_source_lang = "en"
+        source_lang = input(f"Enter source language code for the first column (default: {default_source_lang}): ").strip()
+        if not source_lang:
+            source_lang = default_source_lang
     print("\n=== Translation Script ===")
     excel_files = list_excel_files()
     if not excel_files:
@@ -255,22 +260,22 @@ def main():
                         while attempt < max_attempts:
                             if backend_choice == '1':
                                 translated, error = translate_with_timeout(
-                                    GoogleTranslator(source="en", target=target_code).translate,
+                                    GoogleTranslator(source=source_lang, target=target_code).translate,
                                     (prepped_text,), 15)
                                 backend = "Google"
                             elif backend_choice == '2':
                                 translated, error = translate_with_timeout(
-                                    LibreTranslator(source="en", target=target_code).translate,
+                                    LibreTranslator(source=source_lang, target=target_code).translate,
                                     (prepped_text,), 15)
                                 backend = "Libre"
                             else:
                                 translated, error = translate_with_timeout(
-                                    GoogleTranslator(source="en", target=target_code).translate,
+                                    GoogleTranslator(source=source_lang, target=target_code).translate,
                                     (prepped_text,), 15)
                                 backend = "Google"
                                 if error:
                                     translated, error = translate_with_timeout(
-                                        LibreTranslator(source="en", target=target_code).translate,
+                                        LibreTranslator(source=source_lang, target=target_code).translate,
                                         (prepped_text,), 15)
                                     backend = "Libre"
                             if not error:
@@ -288,7 +293,7 @@ def main():
                         # --- Translation check: back-translate and language detect ---
                         try:
                             back_translated, bt_error = translate_with_timeout(
-                                GoogleTranslator(source=target_code, target="en").translate,
+                                GoogleTranslator(source=target_code, target=source_lang).translate,
                                 (translated_str,), 15)
                             if bt_error:
                                 back_translated = ""
