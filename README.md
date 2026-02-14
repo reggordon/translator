@@ -70,11 +70,33 @@ If you prefer manual setup, follow these steps:
 3. Install dependencies with `pip install -r requirements.txt`
 4. Run the script with `python translate.py`
 
+## File Format Tips
+- **Source column:** The first column should contain the English (or source language) terms.
+- **Language columns:** Each subsequent column should be named with a valid language code (e.g., `fr`, `de`, `zh-TW`).
+- **No empty headers:** Avoid blank column headers; only columns with valid language codes will be translated.
+- **Technical terms only:** This tool is optimized for technical terms, not full sentences or grammar-heavy content.
+- **Consistent terminology:** For best results, use a glossary or termbase for key phrases.
+
+## Example Excel Layout
+| Term         | fr    | de    | zh-TW |
+|--------------|-------|-------|-------|
+| Checkout     |       |       |       |
+| Payment      |       |       |       |
+| Cancel Order |       |       |       |
+
+## Tips
+- Review suspect and failed translations in the summary report.
+- Excluded columns (unsupported or empty) are listed in the report.
+- For best accuracy, keep terms short and unambiguous.
+- If you need to add a glossary, contact the developer.
+
+## Supported Language Codes
+- Use codes supported by Google or Libre translators (e.g., `fr`, `de`, `es`, `zh-TW`).
+- Region-specific codes (like `zh-TW`) are supported if recognized by the backend.
+
 ## Troubleshooting
-- Ensure all required packages are installed (`pip install -r requirements.txt`)
-- Activate your virtual environment before running the script
-- If you see missing package errors, re-run the setup steps
-- If you see errors like "No support for the provided language", check your Excel file's column headers. Only use valid [ISO 639-1 language codes](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) supported by the translation API (e.g., `ar` for Arabic, `nl` for Dutch, `ga` for Irish, etc.). Remove or correct any invalid codes (like `ar.1`, `nl.1`, `cz`, etc.).
+- If translations fail, check your internet connection and language codes.
+- Review the summary report for details on skipped or failed columns.
 
 ## License
 MIT

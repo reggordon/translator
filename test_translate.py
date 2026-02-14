@@ -30,6 +30,45 @@ def main():
         print("No .xlsx files found in current directory.")
         sys.exit(1)
     input_file = choose_file(excel_files, "Select input Excel file:")
+    # Suggest default output name based on input
+    base_name = os.path.splitext(os.path.basename(input_file))[0]
+    default_output_xlsx = f"{base_name}_test_results.xlsx"
+    default_output_csv = f"{base_name}_test_results.csv"
+    output_file_xlsx = input(f"Enter output Excel filename (default: {default_output_xlsx}): ").strip()
+    if not output_file_xlsx:
+        output_file_xlsx = default_output_xlsx
+    if not output_file_xlsx.lower().endswith('.xlsx'):
+        output_file_xlsx += '.xlsx'
+    output_file_csv = input(f"Enter output CSV filename (default: {default_output_csv}): ").strip()
+    if not output_file_csv:
+        output_file_csv = default_output_csv
+    if not output_file_csv.lower().endswith('.csv'):
+        output_file_csv += '.csv'
+    # Prompt before overwriting
+    for f in [output_file_xlsx, output_file_csv]:
+        if os.path.exists(f):
+            confirm = input(f"Output file '{f}' already exists. Overwrite? (y/n): ").strip().lower()
+            if confirm != 'y':
+                print("Aborting.")
+                sys.exit(0)
+
+    # Requirements check (minimal)
+    try:
+        import pandas, openpyxl, deep_translator
+    except ImportError as e:
+        print(f"Missing required package: {e.name}. Please install all dependencies with 'pip install -r requirements.txt'.")
+        sys.exit(1)
+
+    backend_options = ['1', '2', '3']
+    print("\nChoose translation backend:")
+    print("  [1] GoogleTranslator")
+    print("  [2] LibreTranslator")
+    print("  [3] Try Google, fallback to Libre")
+    while True:
+        backend_choice = input("Enter number: ")
+        if backend_choice in backend_options:
+            break
+        print("Invalid choice. Try again.")
     # Ask user for terms to ignore (comma-separated, case-insensitive)
     ignore_terms_input = input("Enter comma-separated terms to ignore (leave blank for none): ").strip()
     if ignore_terms_input:
@@ -80,10 +119,13 @@ def main():
             text = text.replace(placeholder, link)
         return text
     df = pd.read_excel(input_file)
+    # Warn if first column is empty
+    if df.shape[1] == 0 or df.iloc[:,0].isnull().all() or (df.iloc[:,0].astype(str).str.strip() == '').all():
+        print("Warning: The first column (source text) is empty. Please check your input file.")
+        sys.exit(1)
     for col in df.columns:
         df[col] = df[col].astype('object')
-    # Validate language codes: only keep those supported by GoogleTranslator
-    # Instantiate and call get_supported_languages as an instance method (for deep_translator >=1.11.4)
+    # Validate language codes: only keep those supported by GoogleTranslator and skip empty/invalid headers
     try:
         code_dict = GoogleTranslator().get_supported_languages(as_dict=True)
         supported_codes = set(code_dict.values())
@@ -92,55 +134,101 @@ def main():
             supported_codes = set(GoogleTranslator().get_supported_languages())
         except Exception:
             supported_codes = set()
-    language_codes = [col for col in df.columns[1:] if str(col).split("-")[0].strip() in supported_codes]
-    skipped_codes = [col for col in df.columns[1:] if str(col).split("-")[0].strip() not in supported_codes]
+    language_codes = []
+    skipped_codes = []
+    for col in df.columns[1:]:
+        col_str = str(col).strip()
+        if not col_str:
+            skipped_codes.append("<empty header>")
+            continue
+        # Use the full code for validation
+        if col_str in supported_codes:
+            language_codes.append(col)
+        else:
+            skipped_codes.append(col_str)
     if skipped_codes:
-        print(f"Warning: Skipping unsupported language codes: {', '.join(map(str, skipped_codes))}")
+        print(f"Warning: Skipping unsupported or empty language columns: {', '.join(map(str, skipped_codes))}")
+
+    # Prepare exclusion report for summary
+    exclusion_report = ""
+    if skipped_codes:
+        exclusion_report = f"Excluded columns (unsupported or empty): {', '.join(map(str, skipped_codes))}"
     print("\nTesting translation on first 3 rows...")
-    test_df = df.head(3).copy()
+    # Only keep the source and valid language columns in the test output
+    test_df = df.loc[:2, [df.columns[0]] + language_codes].copy()
     success_count = 0
     fail_count = 0
-    for row_idx in range(test_df.shape[0]):
-        english_text = str(test_df.iat[row_idx, 0]).strip()
-        clean_text = preprocess_text(english_text)
-        prepped_text, placeholders = extract_bold(clean_text)
-        print(f"\nRow {row_idx+1} (EN): {english_text}")
+    failed_translations = []
+    try:
         for col_idx, lang_code in enumerate(language_codes, start=1):
-            short_code = str(lang_code).split("-")[0].strip()
-            max_attempts = 3
-            attempt = 0
-            error = None
-            translated = None
-            while attempt < max_attempts:
-                try:
-                    translated = GoogleTranslator(source="en", target=short_code).translate(prepped_text)
-                    error = None
-                    break
-                except Exception as e:
-                    error = e
-                    attempt += 1
-            if error:
-                test_df.iat[row_idx, col_idx] = f"[ERROR: {error}]"
-                print(f"  {lang_code}: [ERROR: {error}]")
-                fail_count += 1
-            else:
-                translated_str = restore_bold(str(translated), placeholders)
-                test_df.iat[row_idx, col_idx] = translated_str
-                print(f"  {lang_code}: {translated_str}")
-                success_count += 1
-    # Output to test-results.xlsx and test-results.csv
-    test_df.to_excel("test-results.xlsx", index=False)
-    test_df.to_csv("test-results.csv", index=False)
-    print("\nTest complete. Results saved to test-results.xlsx and test-results.csv. If translations appear and formatting is preserved, the file is valid.")
+            print(f"Translating column: {lang_code}")
+            target_code = str(lang_code).strip()
+            for row_idx in range(test_df.shape[0]):
+                english_text = str(test_df.iat[row_idx, 0]).strip()
+                clean_text = preprocess_text(english_text)
+                prepped_text, placeholders = extract_bold(clean_text)
+                if row_idx == 0:
+                    print(f"\nRow {row_idx+1} (EN): {english_text}")
+                max_attempts = 3
+                attempt = 0
+                error = None
+                translated = None
+                while attempt < max_attempts:
+                    try:
+                        if backend_choice == '1':
+                            translated = GoogleTranslator(source="en", target=target_code).translate(prepped_text)
+                            error = None
+                        elif backend_choice == '2':
+                            translated = LibreTranslator(source="en", target=target_code).translate(prepped_text)
+                            error = None
+                        else:
+                            translated = GoogleTranslator(source="en", target=target_code).translate(prepped_text)
+                            error = None
+                        break
+                    except Exception as e:
+                        error = e
+                        attempt += 1
+                if error:
+                    test_df.iat[row_idx, col_idx] = f"[ERROR: {error}]"
+                    print(f"  {lang_code}: [ERROR: {error}]")
+                    fail_count += 1
+                    failed_translations.append({
+                        "row": row_idx,
+                        "english_text": english_text,
+                        "language_code": lang_code,
+                        "error": str(error)
+                    })
+                else:
+                    translated_str = restore_bold(str(translated), placeholders)
+                    test_df.iat[row_idx, col_idx] = translated_str
+                    print(f"  {lang_code}: {translated_str}")
+                    success_count += 1
+            print(f"Finished translating column: {lang_code}")
+    except KeyboardInterrupt:
+        print("\nTest interrupted by user.")
+        print(f"Rows translated: {success_count}, Failed: {fail_count}")
+        sys.exit(1)
+
+    # Output to user-specified files
+    test_df.to_excel(output_file_xlsx, index=False)
+    test_df.to_csv(output_file_csv, index=False)
+    print(f"\nTest complete. Results saved to {output_file_xlsx} and {output_file_csv}. If translations appear and formatting is preserved, the file is valid.")
 
     # Generate summary report
     summary_report = [
-        f"Test translation complete. Results saved to 'test-results.xlsx'.",
+        f"Test translation complete. Results saved to '{output_file_xlsx}'.",
         "Summary:",
         f"  Successful translations: {success_count}",
         f"  Failed translations: {fail_count}",
         f"  Total cells tested: {success_count + fail_count}"
     ]
+    if exclusion_report:
+        summary_report.append("")
+        summary_report.append(exclusion_report)
+    if failed_translations:
+        summary_report.append(f"First 3 failed translations:")
+        for fail in failed_translations[:3]:
+            summary_report.append(f"  Row {fail['row']+1}, Language: {fail['language_code']}, Error: {fail['error']}")
     with open("test_translation_summary_report.txt", "w", encoding="utf-8") as summary_file:
         summary_file.write("\n".join(summary_report))
     print("Summary report saved to test_translation_summary_report.txt.")
