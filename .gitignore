@@ -1,0 +1,20 @@
+# Ignore Python virtual environments
+venv/
+.venv/
+
+# Ignore Excel, CSV, and text files
+*.xlsx
+*.cnv
+*.txt
+
+# Ignore other common files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore log files
+*.log
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/

@@ -15,8 +15,30 @@ This project provides scripts to automate translation and cleaning of Excel file
 - Supports GoogleTranslator and LibreTranslator backends
 - Logs failed and suspect translations
 - Generates a summary report after each run
+- **Ignore Terms:** You can specify a comma-separated list of terms (e.g., product names, trademarks) to be ignored during translation. These terms will be preserved as links and not translated. If you leave the input blank, all text will be translated as normal.
+- **Formatting Preservation:** Bold text (markdown `**bold**`) is preserved and output as a link. Ignored terms are also output as links.
+- **Test Script:** A test script (`test_translate.py`) is provided to quickly validate your Excel file and translation settings on the first 3 rows before running the full translation. The test script now also generates a summary report (`test_translation_summary_report.txt`) showing the number of successful and failed translations for your sample.
 
 ## Getting Started
+
+## Usage Notes
+
+- When prompted, you can enter a comma-separated list of terms to ignore (e.g., `CLICK TO PAY, VISA`). These will not be translated and will be preserved as links in the output. Leave blank to translate all text.
+- The test script (`test_translate.py`) uses the same logic as the main script, including input preprocessing, retry logic, and language code validation for improved accuracy. Use it to check your file and ignore terms before running the full translation. After running, check `test_translation_summary_report.txt` for a summary of results.
+
+### Running the Test Script
+
+To quickly validate your Excel file and ignore terms:
+
+1. Place your Excel file (`.xlsx`) in the project folder.
+2. Run:
+   ```zsh
+   python test_translate.py
+   ```
+3. Follow the prompts to select your file and enter ignore terms. The script will show translations for the first 3 rows for all language columns.
+
+
+If the output looks correct, and the summary report shows no unexpected failures, proceed to run the full translation script as described above.
 
 
 ## Quick Setup (Recommended)
@@ -37,6 +59,7 @@ This project provides scripts to automate translation and cleaning of Excel file
    - Failures logged to `failed_translations_log.csv`
    - Suspect translations logged to `suspect_translations_review.csv`
    - Summary report saved to `translation_summary_report.txt`
+   - Test summary report saved to `test_translation_summary_report.txt` (when running the test script)
 
 ---
 
@@ -51,6 +74,7 @@ If you prefer manual setup, follow these steps:
 - Ensure all required packages are installed (`pip install -r requirements.txt`)
 - Activate your virtual environment before running the script
 - If you see missing package errors, re-run the setup steps
+- If you see errors like "No support for the provided language", check your Excel file's column headers. Only use valid [ISO 639-1 language codes](https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes) supported by the translation API (e.g., `ar` for Arabic, `nl` for Dutch, `ga` for Irish, etc.). Remove or correct any invalid codes (like `ar.1`, `nl.1`, `cz`, etc.).
 
 ## License
 MIT
