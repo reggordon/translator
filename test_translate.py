@@ -60,6 +60,22 @@ def main():
                 print("Aborting.")
                 sys.exit(0)
 
+    # --- [BOLD] row and multi-bold support ---
+    df = pd.read_excel(input_file)
+    bold_pairs = []
+    rows_to_translate = []
+    i = 0
+    while i < len(df):
+        cell_val = str(df.iloc[i, 0]) if pd.notna(df.iloc[i, 0]) else ""
+        if cell_val.strip().startswith("[BOLD]"):
+            if i > 0:
+                bold_words = [w.strip() for w in cell_val.strip()[6:].split(",") if w.strip()]
+                bold_pairs.append((i-1, bold_words, i))
+            i += 1
+        else:
+            rows_to_translate.append(i)
+            i += 1
+
     # Requirements check (minimal)
     try:
         import pandas, openpyxl, deep_translator
@@ -126,7 +142,7 @@ def main():
         for placeholder, link in placeholders.items():
             text = text.replace(placeholder, link)
         return text
-    df = pd.read_excel(input_file)
+
     # Warn if first column is empty
     if df.shape[1] == 0 or df.iloc[:,0].isnull().all() or (df.iloc[:,0].astype(str).str.strip() == '').all():
         print("Warning: The first column (source text) is empty. Please check your input file.")
@@ -167,6 +183,8 @@ def main():
     success_count = 0
     fail_count = 0
     failed_translations = []
+    # --- Context-aware [BOLD] handling for test rows ---
+    context_bold_rows = []
     try:
         for col_idx, lang_code in enumerate(language_codes, start=1):
             print(f"Translating column: {lang_code}")
@@ -206,11 +224,37 @@ def main():
                     })
                 else:
                     translated_str = str(translated)
-                    # Preserve bold formatting: if original had **...**, keep **...** in output
-                    # (Assume translation engine preserves markdown formatting)
                     test_df.iat[row_idx, col_idx] = translated_str
                     print(f"  {lang_code}: {translated_str}")
                     success_count += 1
+
+                    # --- Context-aware [BOLD] handling for test rows ---
+                    for (main_idx, bold_words, bold_row_idx) in bold_pairs:
+                        if main_idx == row_idx:
+                            bold_translations = []
+                            for bold_word in bold_words:
+                                try:
+                                    bold_translated = GoogleTranslator(source=source_lang, target=target_code).translate(bold_word)
+                                except Exception:
+                                    bold_translated = ""
+                                found_in_sentence = False
+                                if bold_translated and bold_translated in translated_str:
+                                    found_in_sentence = True
+                                    bold_translations.append(f"{bold_word} → {bold_translated} (in sentence)")
+                                else:
+                                    import difflib
+                                    matches = difflib.get_close_matches(bold_translated, translated_str.split(), n=1, cutoff=0.7)
+                                    if matches:
+                                        found_in_sentence = True
+                                        bold_translations.append(f"{bold_word} → {matches[0]} (fuzzy match)")
+                                    else:
+                                        bold_translations.append(f"{bold_word} → {bold_translated} (not found)")
+                            context_bold_rows.append({
+                                "Row": row_idx+2,
+                                "Language": lang_code,
+                                "Source": source_text,
+                                "Bold Words & Translations": "; ".join(bold_translations)
+                            })
 
                     # --- Translation verification: back-translate and language detect ---
                     try:
@@ -245,6 +289,32 @@ def main():
     # Output to user-specified files
     test_df.to_excel(output_file_xlsx, index=False)
     test_df.to_csv(output_file_csv, index=False)
+
+    # Output context-aware bold translations to a separate sheet
+    if context_bold_rows:
+        import openpyxl
+        from pandas import ExcelWriter
+        with ExcelWriter(output_file_xlsx, engine="openpyxl", mode="a") as writer:
+            import pandas as pd
+            context_bold_df = pd.DataFrame(context_bold_rows)
+            context_bold_df.to_excel(writer, index=False, sheet_name="ContextBoldWords")
+
+    # --- Apply real bold formatting in Excel for markdown bold (**...**) ---
+    import openpyxl
+    from openpyxl.styles import Font
+    wb = openpyxl.load_workbook(output_file_xlsx)
+    ws = wb.active
+    for row in ws.iter_rows(min_row=2):  # skip header
+        for cell in row:
+            if cell.value and isinstance(cell.value, str) and "**" in cell.value:
+                import re
+                matches = list(re.finditer(r"\*\*([^*]+)\*\*", cell.value))
+                if matches:
+                    new_val = re.sub(r"\*\*([^*]+)\*\*", r"\1", cell.value)
+                    cell.value = new_val
+                    cell.font = Font(bold=True)
+    wb.save(output_file_xlsx)
+
     print(f"\nTest complete. Results saved to {output_file_xlsx} and {output_file_csv}. If translations appear and formatting is preserved, the file is valid.")
 
     # Generate summary report
@@ -273,3 +343,14 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# --- Utility: Detect and print bold cells in Translations sheet ---
+def print_bold_cells_in_excel(filename):
+    import openpyxl
+    wb = openpyxl.load_workbook(filename)
+    ws = wb.active
+    print(f"Bold cells in '{filename}' (active sheet):")
+    for row in ws.iter_rows(min_row=2):  # skip header
+        for cell in row:
+            if cell.font and cell.font.bold:
+                print(f"  Cell {cell.coordinate}: {cell.value}")

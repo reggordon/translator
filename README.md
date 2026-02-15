@@ -17,28 +17,46 @@ This project provides scripts to automate translation and cleaning of Excel file
 - Generates a summary report after each run
 - **Ignore Terms:** You can specify a comma-separated list of terms (e.g., product names, trademarks) to be ignored during translation. These terms will be preserved as links and not translated. If you leave the input blank, all text will be translated as normal.
 - **Formatting Preservation:** Bold text (markdown `**bold**`) is preserved and output as a link. Ignored terms are also output as links.
-- **Test Script:** A test script (`test_translate.py`) is provided to quickly validate your Excel file and translation settings on the first 3 rows before running the full translation. The test script now also generates a summary report (`test_translation_summary_report.txt`) showing the number of successful and failed translations for your sample.
+- **[BOLD] Row Support:** Both `translate.py` and `test_translate.py` support context-aware handling of `[BOLD]` rows. You can specify one or more bold words/phrases in a `[BOLD]` row immediately following a main text row. The scripts will extract, translate, and report all bold words in context, returning all translations in a single output row for review.
+- **Multiple Bold Words:** If a `[BOLD]` row contains multiple bold words/phrases (comma-separated), all will be processed and reported together for that main text row.
+- **Test Script:** The test script (`test_translate.py`) uses the same context-aware `[BOLD]` logic as the main script, including multi-bold support and consolidated output. It generates a summary report (`test_translation_summary_report.txt`) showing the number of successful and failed translations for your sample, and outputs all bold word translations in a dedicated sheet.
 
 ## Getting Started
+
+**Best Practice:** To ensure all dependencies are installed and the correct Python environment is used, always run the provided bash scripts to launch the translation tools. This is the recommended and supported workflow for this project.
+
+- Use `zsh setup.sh` to run the main translation script (`translate.py`).
+- Use `zsh test.sh` to run the test script (`test_translate.py`).
+
+These scripts will create a virtual environment, install dependencies, and launch the appropriate tool. Keeping to this workflow avoids environment issues and ensures consistent results. You should keep the terminal open or reactivate the environment (`source venv/bin/activate`) if you want to run other scripts manually.
 
 ## Usage Notes
 
 - When prompted, you can enter a comma-separated list of terms to ignore (e.g., `CLICK TO PAY, VISA`). These will not be translated and will be preserved as links in the output. Leave blank to translate all text.
-- The test script (`test_translate.py`) uses the same logic as the main script, including input preprocessing, retry logic, and language code validation for improved accuracy. Use it to check your file and ignore terms before running the full translation. After running, check `test_translation_summary_report.txt` for a summary of results.
+- The test script (`test_translate.py`) uses the same logic as the main script, including input preprocessing, retry logic, language code validation, and full support for `[BOLD]` rows and multiple bold words per row. Use it to check your file and ignore terms before running the full translation. After running, check `test_translation_summary_report.txt` for a summary of results, and review the `ContextBoldWords` sheet in the output Excel file for all bold word translations.
 
-### Running the Test Script
 
-To quickly validate your Excel file and ignore terms:
+### Running the Scripts
+
+**To run the main translation script:**
 
 1. Place your Excel file (`.xlsx`) in the project folder.
 2. Run:
    ```zsh
-   python test_translate.py
+   zsh setup.sh
    ```
-3. Follow the prompts to select your file and enter ignore terms. The script will show translations for the first 3 rows for all language columns.
+   This will set up the environment and launch `translate.py`.
 
+**To run the test script:**
 
-If the output looks correct, and the summary report shows no unexpected failures, proceed to run the full translation script as described above.
+1. Place your Excel file (`.xlsx`) in the project folder.
+2. Run:
+   ```zsh
+   zsh test.sh
+   ```
+   This will set up the environment and launch `test_translate.py`.
+
+Follow the prompts in each script to select your file and enter ignore terms. The test script will show translations for the first 3 rows for all language columns. If the output looks correct, and the summary report shows no unexpected failures, proceed to run the full translation script as above.
 
 
 ## Quick Setup (Recommended)
@@ -84,6 +102,29 @@ If you prefer manual setup, follow these steps:
 | Payment      |       |       |       |
 | Cancel Order |       |       |       |
 
+## Recommended Structure for Bold Words
+
+If you need to track and preserve bold words in your translations, use the following approach:
+
+- Keep your main text in one row.
+- Directly below each main text row, add a row that lists only the bold words or phrases from the main text, prefixed with [BOLD].
+
+Example:
+
+| Text                                 |
+|--------------------------------------|
+| This is a very important message.    |
+| [BOLD] important                     |
+| Please click the Confirm button.     |
+| [BOLD] Confirm                       |
+
+This structure allows you to:
+- Clearly identify which words should be bold in each message.
+- Programmatically process and format bold words during translation or post-processing.
+- Avoid adding extra columns or complex formatting in the source file.
+
+**Note:** You will need to adjust your translation script to recognize and handle these [BOLD] rows as indicators for formatting.
+
 ## Tips
 - Review suspect and failed translations in the summary report.
 - Excluded columns (unsupported or empty) are listed in the report.
@@ -103,3 +144,4 @@ MIT
 
 ## Privacy & Security
 See [PRIVACY.md](PRIVACY.md) for important privacy and security guidelines when using this tool in a company setting.
+
