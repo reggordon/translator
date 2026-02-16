@@ -374,20 +374,26 @@ def main():
         # Check if this row has a [BOLD] pair
         for (main_idx, bold_words, bold_row_idx) in bold_pairs:
             if main_idx == idx:
-                    if bold_row_idx == idx:
-                        # Build a new row for bold words (remove '[BOLD]' and just return phrase)
-                        phrase = test_df.iloc[idx, 0].replace('[BOLD]', '').strip()
-                        bold_row = pd.Series([phrase], index=[test_df.columns[0]])
-                        for col_name, target_code in valid_columns:
-                            translated_bolds = []
-                            for bold_word in bold_words:
-                                try:
-                                    bold_translated = GoogleTranslator(source=source_lang, target=target_code).translate(bold_word)
-                                except Exception:
-                                    bold_translated = ""
+                if bold_row_idx == idx:
+                    # Build a new row for bold words, keep '[BOLD]' in the source column for clarity
+                    phrase = test_df.iloc[idx, 0].strip()
+                    if not phrase.startswith('[BOLD]'):
+                        phrase = '[BOLD] ' + phrase
+                    bold_row = pd.Series([phrase], index=[test_df.columns[0]])
+                    for col_name, target_code in valid_columns:
+                        translated_bolds = []
+                        for bold_word in bold_words:
+                            try:
+                                bold_translated = GoogleTranslator(source=source_lang, target=target_code).translate(bold_word)
+                            except Exception:
+                                bold_translated = ""
+                            if not bold_translated or bold_translated.strip() == "":
+                                # Italicize if not translated
+                                translated_bolds.append(f"*{bold_word}*")
+                            else:
                                 translated_bolds.append(str(bold_translated))
-                            bold_row[col_name] = ", ".join(translated_bolds)
-                        new_rows.append(bold_row)
+                        bold_row[col_name] = ", ".join(translated_bolds)
+                    new_rows.append(bold_row)
     test_df_with_bold = pd.DataFrame(new_rows, columns=test_df.columns)
     test_df_with_bold[output_cols].to_excel(output_file_xlsx, index=False, sheet_name="Translations")
 

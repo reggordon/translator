@@ -406,8 +406,10 @@ def main():
             is_bold_row = False
             for (main_idx, bold_words, bold_row_idx) in bold_pairs:
                 if bold_row_idx == idx:
-                    # Build a new row for bold words (remove '[BOLD]' and just return phrase)
-                    phrase = df.iloc[idx, 0].replace('[BOLD]', '').strip()
+                    # Build a new row for bold words, keep '[BOLD]' in the source column for clarity
+                    phrase = df.iloc[idx, 0].strip()
+                    if not phrase.startswith('[BOLD]'):
+                        phrase = '[BOLD] ' + phrase
                     bold_row = pd.Series([phrase], index=[df.columns[0]])
                     for col_name, target_code in valid_columns:
                         translated_bolds = []
@@ -418,7 +420,11 @@ def main():
                                     (bold_word,), 15)
                             except Exception:
                                 bold_translated = ""
-                            translated_bolds.append(str(bold_translated))
+                            if not bold_translated or str(bold_translated).strip() == "":
+                                # Italicize if not translated
+                                translated_bolds.append(f"*{bold_word}*")
+                            else:
+                                translated_bolds.append(str(bold_translated))
                         bold_row[col_name] = ", ".join(translated_bolds)
                     new_rows.append(bold_row)
                     is_bold_row = True
