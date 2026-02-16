@@ -23,12 +23,17 @@ This project provides scripts to automate translation and cleaning of Excel file
 
 ## Getting Started
 
-**Best Practice:** To ensure all dependencies are installed and the correct Python environment is used, always run the provided bash scripts to launch the translation tools. This is the recommended and supported workflow for this project.
+**Best Practice:** To ensure all dependencies are installed and the correct Python environment is used, always run the provided setup scripts to launch the translation tools. This is the recommended and supported workflow for this project.
 
+**For Mac/Linux users:**
 - Use `zsh setup.sh` to run the main translation script (`translate.py`).
 - Use `zsh test.sh` to run the test script (`test_translate.py`).
 
-These scripts will create a virtual environment, install dependencies, and launch the appropriate tool. Keeping to this workflow avoids environment issues and ensures consistent results. You should keep the terminal open or reactivate the environment (`source venv/bin/activate`) if you want to run other scripts manually.
+**For Windows users:**
+- Use `setup.bat` to run the main translation script (`translate.py`).
+- Use `test.bat` to run the test script (`test_translate.py`).
+
+These scripts will create a virtual environment, install dependencies, and launch the appropriate tool. Keeping to this workflow avoids environment issues and ensures consistent results. You should keep the terminal open or reactivate the environment (`source venv/bin/activate` on Mac/Linux, `venv\Scripts\activate` on Windows) if you want to run other scripts manually.
 
 ## Usage Notes
 
@@ -38,8 +43,10 @@ These scripts will create a virtual environment, install dependencies, and launc
 
 ### Running the Scripts
 
-**To run the main translation script:**
 
+#### On Mac/Linux:
+
+**To run the main translation script:**
 1. Place your Excel file (`.xlsx`) in the project folder.
 2. Run:
    ```zsh
@@ -48,11 +55,28 @@ These scripts will create a virtual environment, install dependencies, and launc
    This will set up the environment and launch `translate.py`.
 
 **To run the test script:**
-
 1. Place your Excel file (`.xlsx`) in the project folder.
 2. Run:
    ```zsh
    zsh test.sh
+   ```
+   This will set up the environment and launch `test_translate.py`.
+
+#### On Windows:
+
+**To run the main translation script:**
+1. Place your Excel file (`.xlsx`) in the project folder.
+2. Double-click `setup.bat` or run in Command Prompt:
+   ```bat
+   setup.bat
+   ```
+   This will set up the environment and launch `translate.py`.
+
+**To run the test script:**
+1. Place your Excel file (`.xlsx`) in the project folder.
+2. Double-click `test.bat` or run in Command Prompt:
+   ```bat
+   test.bat
    ```
    This will set up the environment and launch `test_translate.py`.
 

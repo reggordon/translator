@@ -24,6 +24,12 @@ def choose_file(files, prompt):
         print("Invalid choice. Try again.")
 
 def main():
+    # Import mapping from language_mapping.py
+    try:
+        from language_mapping import LANGUAGE_MAPPING
+    except ImportError:
+        LANGUAGE_MAPPING = {}
+    import pandas as pd
     from langdetect import detect, LangDetectException
     import difflib
     suspect_translations = []
@@ -41,40 +47,32 @@ def main():
     # Suggest default output name based on input
     base_name = os.path.splitext(os.path.basename(input_file))[0]
     default_output_xlsx = f"{base_name}_test_results.xlsx"
-    default_output_csv = f"{base_name}_test_results.csv"
     output_file_xlsx = input(f"Enter output Excel filename (default: {default_output_xlsx}): ").strip()
     if not output_file_xlsx:
         output_file_xlsx = default_output_xlsx
     if not output_file_xlsx.lower().endswith('.xlsx'):
         output_file_xlsx += '.xlsx'
-    output_file_csv = input(f"Enter output CSV filename (default: {default_output_csv}): ").strip()
-    if not output_file_csv:
-        output_file_csv = default_output_csv
-    if not output_file_csv.lower().endswith('.csv'):
-        output_file_csv += '.csv'
     # Prompt before overwriting
-    for f in [output_file_xlsx, output_file_csv]:
-        if os.path.exists(f):
-            confirm = input(f"Output file '{f}' already exists. Overwrite? (y/n): ").strip().lower()
-            if confirm != 'y':
-                print("Aborting.")
-                sys.exit(0)
+    if os.path.exists(output_file_xlsx):
+        confirm = input(f"Output file '{output_file_xlsx}' already exists. Overwrite? (y/n): ").strip().lower()
+        if confirm != 'y':
+            print("Aborting.")
+            sys.exit(0)
 
     # --- [BOLD] row and multi-bold support ---
     df = pd.read_excel(input_file)
     bold_pairs = []
     rows_to_translate = []
-    i = 0
-    while i < len(df):
+    # Only process first 2 rows for translation
+    for i in range(min(2, len(df))):
         cell_val = str(df.iloc[i, 0]) if pd.notna(df.iloc[i, 0]) else ""
         if cell_val.strip().startswith("[BOLD]"):
             if i > 0:
                 bold_words = [w.strip() for w in cell_val.strip()[6:].split(",") if w.strip()]
                 bold_pairs.append((i-1, bold_words, i))
-            i += 1
+            # Skip [BOLD] row from translation
         else:
             rows_to_translate.append(i)
-            i += 1
 
     # Requirements check (minimal)
     try:
@@ -149,7 +147,10 @@ def main():
         sys.exit(1)
     for col in df.columns:
         df[col] = df[col].astype('object')
-    # Validate language codes: only keep those supported by GoogleTranslator and skip empty/invalid headers
+    # Validate columns: support EITHER all codes or all mapped names (not both)
+    col_headers = [str(col).strip() for col in df.columns[1:]]
+    print("\n[DEBUG] Input column headers:", list(df.columns))
+    print("[DEBUG] Processed col_headers:", col_headers)
     try:
         code_dict = GoogleTranslator().get_supported_languages(as_dict=True)
         supported_codes = set(code_dict.values())
@@ -158,20 +159,19 @@ def main():
             supported_codes = set(GoogleTranslator().get_supported_languages())
         except Exception:
             supported_codes = set()
-    language_codes = []
+    valid_columns = []  # List of (col_name, target_code)
     skipped_codes = []
-    for col in df.columns[1:]:
-        col_str = str(col).strip()
-        if not col_str:
+    for col in col_headers:
+        if not col:
             skipped_codes.append("<empty header>")
-            continue
-        # Use the full code for validation
-        if col_str in supported_codes:
-            language_codes.append(col)
+        elif col in supported_codes:
+            valid_columns.append((col, col))
+        elif col in LANGUAGE_MAPPING:
+            valid_columns.append((col, LANGUAGE_MAPPING[col]))
         else:
-            skipped_codes.append(col_str)
+            skipped_codes.append(col)
     if skipped_codes:
-        print(f"Warning: Skipping unsupported or empty language columns: {', '.join(map(str, skipped_codes))}")
+        print(f"Info: The following columns are intentionally skipped (unsupported or empty): {', '.join(map(str, skipped_codes))}")
 
     # Prepare exclusion report for summary
     exclusion_report = ""
@@ -179,16 +179,85 @@ def main():
         exclusion_report = f"Excluded columns (unsupported or empty): {', '.join(map(str, skipped_codes))}"
     print("\nTesting translation on first 3 rows...")
     # Only keep the source and valid language columns in the test output
-    test_df = df.loc[:2, [df.columns[0]] + language_codes].copy()
+    # Build test_df with all valid columns (even duplicates), skipping only invalid/empty
+    # Output columns should always match input headers (or mapped names), never auto-corrected
+    test_df = df.loc[:1, list(df.columns)].copy()  # Only first 2 rows
     success_count = 0
     fail_count = 0
     failed_translations = []
     # --- Context-aware [BOLD] handling for test rows ---
     context_bold_rows = []
     try:
-        for col_idx, lang_code in enumerate(language_codes, start=1):
-            print(f"Translating column: {lang_code}")
-            target_code = str(lang_code).strip()
+        # Loop over valid columns only
+        for col_name, target_code in valid_columns:
+            lang_code = col_name
+            print(f"Translating column: {col_name} (using code: {target_code})")
+            print(f"[DEBUG] lang_code: {lang_code}, target_code: {target_code}")
+            for row_idx in rows_to_translate:
+                source_text = str(df.iat[row_idx, 0]).strip()
+                prepped_text = preprocess_text(source_text)
+                print(f"Row {row_idx+1} ({source_lang.upper()}): {source_text}")
+                max_attempts = 3
+                attempt = 0
+                error = None
+                translated = None
+                while attempt < max_attempts:
+                    try:
+                        if backend_choice == '1':
+                            translated = GoogleTranslator(source=source_lang, target=target_code).translate(prepped_text)
+                            error = None
+                        elif backend_choice == '2':
+                            translated = LibreTranslator(source=source_lang, target=target_code).translate(prepped_text)
+                            error = None
+                        else:
+                            translated = GoogleTranslator(source=source_lang, target=target_code).translate(prepped_text)
+                            error = None
+                        break
+                    except Exception as e:
+                        error = e
+                        attempt += 1
+                if error:
+                    test_df.at[row_idx, col_name] = f"[ERROR: {error}]"
+                    print(f"  {lang_code}: [ERROR: {error}]")
+                    fail_count += 1
+                    failed_translations.append({
+                        "row": row_idx,
+                        "english_text": source_text,
+                        "language_code": lang_code,
+                        "error": str(error)
+                    })
+                else:
+                    translated_str = str(translated)
+                    test_df.at[row_idx, col_name] = translated_str
+                    print(f"  {lang_code}: {translated_str}")
+                    success_count += 1
+            # --- Context-aware [BOLD] handling for test rows ---
+            for (main_idx, bold_words, bold_row_idx) in bold_pairs:
+                if main_idx == row_idx:
+                    bold_translations = []
+                    for bold_word in bold_words:
+                        try:
+                            bold_translated = GoogleTranslator(source=source_lang, target=target_code).translate(bold_word)
+                        except Exception:
+                            bold_translated = ""
+                        found_in_sentence = False
+                        if bold_translated and bold_translated in translated_str:
+                            found_in_sentence = True
+                            bold_translations.append(f"{bold_word} → {bold_translated} (in sentence)")
+                        else:
+                            import difflib
+                            matches = difflib.get_close_matches(bold_translated, translated_str.split(), n=1, cutoff=0.7)
+                            if matches:
+                                found_in_sentence = True
+                                bold_translations.append(f"{bold_word} → {matches[0]} (fuzzy match)")
+                            else:
+                                bold_translations.append(f"{bold_word} → {bold_translated} (not found)")
+                    context_bold_rows.append({
+                        "Row": row_idx+2,
+                        "Language": lang_code,
+                        "Source": source_text,
+                        "Bold Words & Translations": "; ".join(bold_translations)
+                    })
             for row_idx in range(test_df.shape[0]):
                 source_text = str(test_df.iat[row_idx, 0]).strip()
                 prepped_text = preprocess_text(source_text)
@@ -213,7 +282,7 @@ def main():
                         error = e
                         attempt += 1
                 if error:
-                    test_df.iat[row_idx, col_idx] = f"[ERROR: {error}]"
+                    test_df.at[row_idx, col_name] = f"[ERROR: {error}]"
                     print(f"  {lang_code}: [ERROR: {error}]")
                     fail_count += 1
                     failed_translations.append({
@@ -224,7 +293,7 @@ def main():
                     })
                 else:
                     translated_str = str(translated)
-                    test_df.iat[row_idx, col_idx] = translated_str
+                    test_df.at[row_idx, col_name] = translated_str
                     print(f"  {lang_code}: {translated_str}")
                     success_count += 1
 
@@ -248,7 +317,10 @@ def main():
                                         found_in_sentence = True
                                         bold_translations.append(f"{bold_word} → {matches[0]} (fuzzy match)")
                                     else:
-                                        bold_translations.append(f"{bold_word} → {bold_translated} (not found)")
+                                        if bold_word in ignore_terms:
+                                            bold_translations.append(f"{bold_word} → {bold_translated} (not found in main text; IGNORED TERM, informational only)")
+                                        else:
+                                            bold_translations.append(f"{bold_word} → {bold_translated} (not found in main text; this is informational, not an error)")
                             context_bold_rows.append({
                                 "Row": row_idx+2,
                                 "Language": lang_code,
@@ -288,16 +360,36 @@ def main():
 
     # Output to user-specified files
     test_df.to_excel(output_file_xlsx, index=False)
-    test_df.to_csv(output_file_csv, index=False)
+        # CSV output has been removed as per the update.
 
     # Output context-aware bold translations to a separate sheet
-    if context_bold_rows:
-        import openpyxl
-        from pandas import ExcelWriter
-        with ExcelWriter(output_file_xlsx, engine="openpyxl", mode="a") as writer:
-            import pandas as pd
-            context_bold_df = pd.DataFrame(context_bold_rows)
-            context_bold_df.to_excel(writer, index=False, sheet_name="ContextBoldWords")
+
+    # Save test results to Excel and CSV, ensuring only valid columns are included
+    valid_language_cols = [col for col, _ in valid_columns]
+    output_cols = [df.columns[0]] + valid_language_cols
+    # Insert [BOLD] rows as new rows in the main sheet after each main row (always)
+    new_rows = []
+    for idx in range(test_df.shape[0]):
+        new_rows.append(test_df.iloc[idx])
+        # Check if this row has a [BOLD] pair
+        for (main_idx, bold_words, bold_row_idx) in bold_pairs:
+            if main_idx == idx:
+                    if bold_row_idx == idx:
+                        # Build a new row for bold words (remove '[BOLD]' and just return phrase)
+                        phrase = test_df.iloc[idx, 0].replace('[BOLD]', '').strip()
+                        bold_row = pd.Series([phrase], index=[test_df.columns[0]])
+                        for col_name, target_code in valid_columns:
+                            translated_bolds = []
+                            for bold_word in bold_words:
+                                try:
+                                    bold_translated = GoogleTranslator(source=source_lang, target=target_code).translate(bold_word)
+                                except Exception:
+                                    bold_translated = ""
+                                translated_bolds.append(str(bold_translated))
+                            bold_row[col_name] = ", ".join(translated_bolds)
+                        new_rows.append(bold_row)
+    test_df_with_bold = pd.DataFrame(new_rows, columns=test_df.columns)
+    test_df_with_bold[output_cols].to_excel(output_file_xlsx, index=False, sheet_name="Translations")
 
     # --- Apply real bold formatting in Excel for markdown bold (**...**) ---
     import openpyxl
@@ -309,17 +401,7 @@ def main():
             if cell.value and isinstance(cell.value, str) and "**" in cell.value:
                 import re
                 matches = list(re.finditer(r"\*\*([^*]+)\*\*", cell.value))
-                if matches:
-                    new_val = re.sub(r"\*\*([^*]+)\*\*", r"\1", cell.value)
-                    cell.value = new_val
-                    cell.font = Font(bold=True)
-    wb.save(output_file_xlsx)
-
-    print(f"\nTest complete. Results saved to {output_file_xlsx} and {output_file_csv}. If translations appear and formatting is preserved, the file is valid.")
-
-    # Generate summary report
     summary_report = [
-        f"Test translation complete. Results saved to '{output_file_xlsx}'.",
         "Summary:",
         f"  Successful translations: {success_count}",
         f"  Failed translations: {fail_count}",
@@ -331,8 +413,8 @@ def main():
     if failed_translations:
         summary_report.append(f"First 3 failed translations:")
         for fail in failed_translations[:3]:
-            summary_report.append(f"  Row {fail['row']+1}, Language: {fail['language_code']}, Error: {fail['error']}")
-    if suspect_translations:
+            # Output columns should always match input headers, never auto-corrected or mapped
+            test_df = df.loc[:1, list(df.columns)].copy()  # Only first 2 rows
         summary_report.append("")
         summary_report.append(f"Suspect translations flagged: {len(suspect_translations)}")
         for s in suspect_translations[:3]:

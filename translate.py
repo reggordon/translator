@@ -61,6 +61,12 @@ def main():
         print("No .xlsx files found in current directory.")
         sys.exit(1)
 
+    # Import mapping from language_mapping.py
+    try:
+        from language_mapping import LANGUAGE_MAPPING
+    except ImportError:
+        LANGUAGE_MAPPING = {}
+
 
 
     input_file = choose_file(excel_files, "Select input Excel file:")
@@ -123,8 +129,10 @@ def main():
     for col in df.columns:
         df[col] = df[col].astype('object')
 
-    # Validate language codes: only keep those supported by GoogleTranslator or LibreTranslator
 
+
+    # Validate columns: support codes, mapped names, or a mix
+    col_headers = [str(col).strip() for col in df.columns[1:]]
     try:
         google_dict = GoogleTranslator().get_supported_languages(as_dict=True)
         google_codes = set(google_dict.values())
@@ -136,24 +144,19 @@ def main():
     except Exception:
         libre_codes = set()
     supported_codes = google_codes | libre_codes
-    language_codes = []
+
+    valid_columns = []  # List of (col_name, target_code)
     skipped_codes = []
-    for col in df.columns[1:]:
-        col_str = str(col).strip()
-        if not col_str:
+    for col in col_headers:
+        if not col:
             skipped_codes.append("<empty header>")
-            continue
-        # Use the full code for validation
-        if col_str in supported_codes:
-            language_codes.append(col)
+        elif col in supported_codes or col in LANGUAGE_MAPPING or len(col) == 2:
+            # Always use the original header, never change
+            valid_columns.append((col, col))
         else:
-            skipped_codes.append(col_str)
+            skipped_codes.append(col)
     if skipped_codes:
         print(f"Warning: Skipping unsupported or empty language columns: {', '.join(map(str, skipped_codes))}")
-        # Drop problematic columns from df to keep headers/data aligned
-        cols_to_drop = [col for col in df.columns[1:] if str(col).strip() in skipped_codes or not str(col).strip()]
-        if cols_to_drop:
-            df.drop(columns=cols_to_drop, inplace=True)
 
     # Prepare exclusion report for summary
     exclusion_report = ""
@@ -162,9 +165,12 @@ def main():
 
     # Check for empty language columns and alert the user
     empty_lang_cols = []
-    for col in language_codes:
+    for col, _ in valid_columns:
+        # Always include the column, even if empty, and ensure it is filled by translation
         if df[col].isnull().all() or (df[col].astype(str).str.strip() == '').all():
             empty_lang_cols.append(col)
+            # Fill the column with empty strings to ensure it is present and will be filled
+            df[col] = ""
     if empty_lang_cols:
         print(f"Note: The following language columns are completely empty and will be filled by translation: {', '.join(map(str, empty_lang_cols))}")
 
@@ -227,7 +233,9 @@ def main():
             return ignore_replacer
         for term in ignore_terms:
             pattern = re.compile(re.escape(term), re.IGNORECASE)
-            new_text = pattern.sub(ignore_replacer_factory(term), new_text)
+            def italicize(match):
+                return f"*{match.group(0)}*"
+            new_text = pattern.sub(italicize, new_text)
         return new_text, placeholders
 
     def restore_bold(text, placeholders):
@@ -254,15 +262,16 @@ def main():
     try:
         # Store context-aware bold translations for output
         context_bold_rows = []
-        for col_idx, lang_code in enumerate(language_codes, start=1):
-            print(f"Translating column: {lang_code}")
-            target_code = str(lang_code).strip()
+        # Loop over actual columns in df (excluding the source column)
+        for col_name, target_code in valid_columns:
+            lang_code = col_name
+            col_idx = df.columns.get_loc(col_name)
+            print(f"Translating column: {col_name} (using code: {target_code})")
+            print(f"[DEBUG] lang_code: {lang_code}, target_code: {target_code}")
             for row_idx in rows_to_translate:
                 english_text = str(df.iat[row_idx, 0]).strip()
                 prepped_text = preprocess_text(english_text)
-                if pd.notna(df.iat[row_idx, col_idx]) and str(df.iat[row_idx, col_idx]).strip() != "":
-                    skip_count += 1
-                    continue
+                # Always translate and overwrite, regardless of current cell contents
                 try:
                     translated = None
                     backend = ""
@@ -387,23 +396,47 @@ def main():
     # Ensure output file is created even if there are no translations
 
     with ExcelWriter(output_file, engine="openpyxl") as writer:
-        # Only keep the source and valid language columns in the output
-        output_cols = [df.columns[0]] + language_codes
-        if df.shape[0] == 0:
+        # Only keep the source and valid language columns in the output (including duplicates)
+        # Output columns should always match input headers, never auto-corrected or mapped
+        output_cols = list(df.columns)
+        # Insert [BOLD] rows as new rows in the main sheet after each main row (always)
+        new_rows = []
+        for idx in range(df.shape[0]):
+            # If this is a [BOLD] row, insert the bold row only (do not add extra row above)
+            is_bold_row = False
+            for (main_idx, bold_words, bold_row_idx) in bold_pairs:
+                if bold_row_idx == idx:
+                    # Build a new row for bold words (remove '[BOLD]' and just return phrase)
+                    phrase = df.iloc[idx, 0].replace('[BOLD]', '').strip()
+                    bold_row = pd.Series([phrase], index=[df.columns[0]])
+                    for col_name, target_code in valid_columns:
+                        translated_bolds = []
+                        for bold_word in bold_words:
+                            try:
+                                bold_translated, _ = translate_with_timeout(
+                                    GoogleTranslator(source=source_lang, target=target_code).translate,
+                                    (bold_word,), 15)
+                            except Exception:
+                                bold_translated = ""
+                            translated_bolds.append(str(bold_translated))
+                        bold_row[col_name] = ", ".join(translated_bolds)
+                    new_rows.append(bold_row)
+                    is_bold_row = True
+                    break
+            if not is_bold_row:
+                new_rows.append(df.iloc[idx])
+        # Rebuild DataFrame
+        df_with_bold = pd.DataFrame(new_rows, columns=df.columns)
+        if df_with_bold.shape[0] == 0:
             empty_df = pd.DataFrame(columns=output_cols)
             empty_df.to_excel(writer, index=False, sheet_name="Translations")
         else:
-            df[output_cols].to_excel(writer, index=False, sheet_name="Translations")
+            df_with_bold[output_cols].to_excel(writer, index=False, sheet_name="Translations")
         if suspect_translations:
             suspects_df = pd.DataFrame(suspect_translations)
             suspects_df.to_excel(writer, index=False, sheet_name="SuspectTranslations")
 
-        # Output context-aware bold translations
-        if context_bold_rows:
-            context_bold_df = pd.DataFrame(context_bold_rows)
-            context_bold_df.to_excel(writer, index=False, sheet_name="ContextBoldWords")
-
-    # --- Apply real bold formatting in Excel for markdown bold (**...**) ---
+    # --- Apply real bold and italic formatting in Excel for markdown bold (**...**) and italics (*...*) ---
     import re
     from openpyxl.styles import Font
     wb = openpyxl.load_workbook(output_file)
@@ -412,35 +445,24 @@ def main():
             ws = wb[sheet_name]
             for row in ws.iter_rows(min_row=2):  # skip header
                 for cell in row:
-                    if cell.value and isinstance(cell.value, str) and "**" in cell.value:
-                        # Find all bold regions
-                        matches = list(re.finditer(r"\*\*([^*]+)\*\*", cell.value))
-                        if matches:
-                            # Remove markdown and apply bold to those regions
-                            new_val = re.sub(r"\*\*([^*]+)\*\*", r"\1", cell.value)
-                            cell.value = new_val
-                            # Apply rich text bold if possible (Excel supports only for entire cell in openpyxl)
-                            cell.font = Font(bold=True)
+                    if cell.value and isinstance(cell.value, str):
+                        # Bold formatting
+                        if "**" in cell.value:
+                            matches = list(re.finditer(r"\*\*([^*]+)\*\*", cell.value))
+                            if matches:
+                                new_val = re.sub(r"\*\*([^*]+)\*\*", r"\1", cell.value)
+                                cell.value = new_val
+                                cell.font = Font(bold=True)
+                        # Italic formatting for ignored terms
+                        if "*" in cell.value:
+                            matches = list(re.finditer(r"\*([^*]+)\*", cell.value))
+                            if matches:
+                                new_val = re.sub(r"\*([^*]+)\*", r"\1", cell.value)
+                                cell.value = new_val
+                                cell.font = Font(italic=True)
     wb.save(output_file)
 
-    # Highlight suspect translations in the main Translations sheet
-    if suspect_translations:
-        wb = openpyxl.load_workbook(output_file)
-        ws = wb["Translations"]
-        yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
-        # Build a set of (row, col) for suspect translations (1-based for openpyxl)
-        suspect_cells = set()
-        output_cols = [df.columns[0]] + language_codes
-        for s in suspect_translations:
-            excel_row = s["row"] + 2  # +1 for header, +1 for 0-based index
-            try:
-                excel_col = output_cols.index(s["language_code"]) + 1
-            except ValueError:
-                continue
-            suspect_cells.add((excel_row, excel_col))
-        for row, col in suspect_cells:
-            ws.cell(row=row, column=col).fill = yellow_fill
-        wb.save(output_file)
+    # (No longer highlighting suspect translations in the main Translations sheet)
 
     # Still save failures to CSV for easy review
     if failed_translations:
